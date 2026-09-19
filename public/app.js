@@ -247,6 +247,8 @@ function renderFiles() {
 }
 
 function openRuleForm(rule) {
+  closeExportPanel();
+  closeImportPanel();
   state.editingRuleId = rule ? rule.id : '';
   el('rule-form-title').textContent = rule ? `编辑规则：${rule.code}` : '新建规则';
   el('rule-code').value = rule ? rule.code : '';
@@ -265,6 +267,178 @@ function closeRuleForm() {
   el('rule-form').classList.add('hidden');
   clearFieldMarks();
 }
+
+// 导出面板：exportPool 是面板打开时拉的全量规则，exportSelection 记下勾选的编号，
+// 规则集与级别只改变列表里显示哪些，不动已经勾上的选择
+const exportState = {
+  pool: [],
+  selection: new Set(),
+};
+
+function exportVisibleRules() {
+  const scope = el('rule-export-scope').value;
+  const level = el('rule-export-level').value;
+  let list = scope === 'filtered' ? state.rules : exportState.pool;
+  if (level) list = list.filter((item) => item.level === level);
+  return list;
+}
+
+function renderExportList() {
+  const visible = exportVisibleRules();
+  const list = el('rule-export-list');
+  if (visible.length === 0) {
+    list.innerHTML = '<p class="empty-tip">这个范围里没有规则</p>';
+  } else {
+    list.innerHTML = visible.map((item) => `
+      <label class="export-item">
+        <input type="checkbox" data-export-id="${escapeHtml(item.id)}" ${exportState.selection.has(item.id) ? 'checked' : ''}>
+        <span class="mono">${escapeHtml(item.code)}</span>
+        <span>${escapeHtml(item.name)}</span>
+        <span class="tag ${levelClass(item.level)}">${escapeHtml(item.level)}</span>
+      </label>`).join('');
+  }
+  el('rule-export-count').textContent = String(exportState.selection.size);
+}
+
+async function openExportPanel() {
+  clearNotice();
+  closeRuleForm();
+  closeImportPanel();
+  try {
+    const payload = await request('/api/rules');
+    exportState.pool = payload.rules || [];
+  } catch (err) {
+    notify(err.message, 'error');
+    return;
+  }
+  const levelSelect = el('rule-export-level');
+  levelSelect.innerHTML = '<option value="">全部级别</option>'
+    + state.levels.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('');
+  el('rule-export-scope').value = 'all';
+  exportState.selection = new Set(exportState.pool.map((item) => item.id));
+  renderExportList();
+  el('rule-export-panel').classList.remove('hidden');
+}
+
+function closeExportPanel() {
+  el('rule-export-panel').classList.add('hidden');
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function runExport() {
+  clearNotice();
+  if (exportState.selection.size === 0) {
+    notify('请至少勾选一条要导出的规则', 'error');
+    return;
+  }
+  try {
+    const payload = await request('/api/rules/export', {
+      method: 'POST',
+      body: JSON.stringify({ ids: Array.from(exportState.selection) }),
+    });
+    const now = new Date();
+    const pad = (num) => String(num).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    downloadJson(`tp98-rules-${stamp}.json`, payload);
+    notify(`已导出 ${payload.count} 条规则`, 'ok');
+    closeExportPanel();
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+// 导入面板：文件读进文本框后统一按文本框内容预演；内容一变，之前的预演结果就作废
+function resetImportPreview() {
+  el('rule-import-result').classList.add('hidden');
+  el('rule-import-result').innerHTML = '';
+  el('rule-import-run').classList.add('hidden');
+}
+
+function openImportPanel() {
+  clearNotice();
+  closeRuleForm();
+  closeExportPanel();
+  el('rule-import-panel').classList.remove('hidden');
+}
+
+function closeImportPanel() {
+  el('rule-import-panel').classList.add('hidden');
+  el('rule-import-file').value = '';
+  el('rule-import-text').value = '';
+  resetImportPreview();
+}
+
+function readImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    el('rule-import-text').value = typeof reader.result === 'string' ? reader.result : '';
+    resetImportPreview();
+  };
+  reader.onerror = () => notify('文件读不出来，请换个文件再试', 'error');
+  reader.readAsText(file);
+}
+
+function renderImportPreview(result) {
+  const box = el('rule-import-result');
+  const lines = [`<div class="summary-line"><strong>一共 ${result.total} 条</strong>　会新增 ${result.add.length} 条　撞上已有 ${result.conflict.length} 条　不成立 ${result.invalid.length} 条</div>`];
+  if (result.add.length > 0) {
+    lines.push(`<div class="summary-line">会新增：${result.add.map((item) => `${escapeHtml(item.code)} ${escapeHtml(item.name)}`).join('；')}</div>`);
+  }
+  if (result.conflict.length > 0) {
+    lines.push(`<div class="summary-line">撞上已有（导入时会跳过）：${result.conflict.map((item) => `${escapeHtml(item.code)}（清单里已有：${escapeHtml(item.existingName)}）`).join('；')}</div>`);
+  }
+  result.invalid.forEach((item) => {
+    const label = item.code ? `第 ${item.index} 条 ${escapeHtml(item.code)}` : `第 ${item.index} 条`;
+    lines.push(`<div class="summary-line invalid-line">不成立：${label}，${item.problems.map(escapeHtml).join('；')}</div>`);
+  });
+  box.innerHTML = lines.join('');
+  box.classList.remove('hidden');
+  el('rule-import-run').classList.toggle('hidden', result.add.length === 0);
+}
+
+async function runImportPreview() {
+  clearNotice();
+  clearFieldMarks();
+  resetImportPreview();
+  try {
+    const result = await request('/api/rules/import/preview', {
+      method: 'POST',
+      body: JSON.stringify({ content: el('rule-import-text').value }),
+    });
+    renderImportPreview(result);
+  } catch (err) {
+    notify(err.message, 'error');
+    markField(err.field);
+  }
+}
+
+async function runImportConfirm() {
+  clearNotice();
+  try {
+    const result = await request('/api/rules/import', {
+      method: 'POST',
+      body: JSON.stringify({ content: el('rule-import-text').value }),
+    });
+    notify(`导入完成：新增 ${result.added} 条，撞上已有跳过 ${result.conflict.length} 条，不成立 ${result.invalid.length} 条`, 'ok');
+    closeImportPanel();
+    await loadRules();
+  } catch (err) {
+    notify(err.message, 'error');
+    markField(err.field);
+  }
+}
+
 
 function openFileForm(file) {
   state.editingFileId = file ? file.id : '';
@@ -505,6 +679,39 @@ el('file-filter-reset').addEventListener('click', () => {
   loadFiles().catch((err) => notify(err.message, 'error'));
 });
 el('scan-run').addEventListener('click', runScan);
+el('rule-export-open').addEventListener('click', openExportPanel);
+el('rule-export-cancel').addEventListener('click', closeExportPanel);
+el('rule-export-scope').addEventListener('change', renderExportList);
+el('rule-export-level').addEventListener('change', renderExportList);
+el('rule-export-all').addEventListener('click', () => {
+  exportVisibleRules().forEach((item) => exportState.selection.add(item.id));
+  renderExportList();
+});
+el('rule-export-none').addEventListener('click', () => {
+  exportVisibleRules().forEach((item) => exportState.selection.delete(item.id));
+  renderExportList();
+});
+el('rule-export-list').addEventListener('change', (event) => {
+  const box = event.target.closest('input[data-export-id]');
+  if (!box) return;
+  if (box.checked) {
+    exportState.selection.add(box.dataset.exportId);
+  } else {
+    exportState.selection.delete(box.dataset.exportId);
+  }
+  el('rule-export-count').textContent = String(exportState.selection.size);
+});
+el('rule-export-run').addEventListener('click', runExport);
+el('rule-import-open').addEventListener('click', openImportPanel);
+el('rule-import-cancel').addEventListener('click', closeImportPanel);
+el('rule-import-file').addEventListener('change', (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (file) readImportFile(file);
+  event.target.value = '';
+});
+el('rule-import-text').addEventListener('input', resetImportPreview);
+el('rule-import-preview').addEventListener('click', runImportPreview);
+el('rule-import-run').addEventListener('click', runImportConfirm);
 el('rule-filter-level').addEventListener('change', () => {
   loadRules().catch((err) => notify(err.message, 'error'));
 });

@@ -383,3 +383,71 @@ label.full input {
   display: flex;
   gap: 10px;
 }
+
+.export-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 720px;
+}
+
+.export-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.export-picker-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #fbfcfd;
+}
+
+.export-picker-list .empty-tip {
+  margin: 4px 0;
+}
+
+label.export-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+label.export-item input {
+  margin: 0;
+}
+
+.import-result {
+  max-width: 720px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f9fafc;
+  font-size: 12.5px;
+}
+
+.import-result .summary-line + .summary-line {
+  margin-top: 4px;
+}
+
+.import-result .invalid-line {
+  color: var(--danger);
+}
+
+input[type="file"] {
+  padding: 4px 0;
+  border: none;
+  background: none;
+}

@@ -54,6 +54,34 @@ app.delete('/api/rules/:id', (req, res) => {
   }
 });
 
+// 导出：可以按规则集、级别或具体勾选的条目挑，导出内容直接能拿走
+app.post('/api/rules/export', (req, res) => {
+  try {
+    res.json(api.exportRules(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// 导入分两步：先预演看清新增、撞上已有与不成立的条目，确认后再真正写进清单
+app.post('/api/rules/import/preview', (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    res.json(api.previewImport(body.content));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/rules/import', (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    res.json(api.importRules(body.content));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/files', (req, res) => {
   res.json(api.listFiles({
     type: api.readQuery(req.query, 'type'),
@@ -130,6 +158,11 @@ app.use((err, _req, res, next) => {
   if (err && err.type === 'entity.parse.failed') {
     return res.status(400).json({
       error: { code: 'BODY_INVALID_JSON', message: '提交的内容不是合法的 JSON', field: '' },
+    });
+  }
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: { code: 'BODY_TOO_LARGE', message: '提交的内容太大了，请分批导入', field: '' },
     });
   }
   if (err) return sendError(res, err);

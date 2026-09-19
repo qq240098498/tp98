@@ -34,6 +34,8 @@
           <button type="button" id="rule-filter-apply">筛选</button>
           <button type="button" id="rule-filter-reset" class="ghost">重置</button>
           <button type="button" id="rule-refresh" class="ghost">刷新</button>
+          <button type="button" id="rule-export-open" class="ghost">导出</button>
+          <button type="button" id="rule-import-open" class="ghost">导入</button>
           <button type="button" id="rule-new">新建规则</button>
         </div>
       </div>
@@ -56,6 +58,55 @@
         </table>
       </div>
       <p class="empty-tip hidden" id="rule-empty">当前筛选条件下没有规则</p>
+
+      <div class="entry-form hidden" id="rule-export-panel">
+        <h3>导出规则</h3>
+        <div class="form-row">
+          <label data-field="exportScope">规则集
+            <select id="rule-export-scope">
+              <option value="all">全部规则</option>
+              <option value="filtered">当前筛选结果</option>
+            </select>
+          </label>
+          <label data-field="exportLevel">级别
+            <select id="rule-export-level">
+              <option value="">全部级别</option>
+            </select>
+          </label>
+        </div>
+        <div class="export-picker">
+          <div class="export-picker-head">
+            <span>具体规则（勾选的才会带走，已选 <span id="rule-export-count">0</span> 条）</span>
+            <span>
+              <button type="button" class="link" id="rule-export-all">全选</button>
+              <button type="button" class="link" id="rule-export-none">全不选</button>
+            </span>
+          </div>
+          <div class="export-picker-list" id="rule-export-list"></div>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="rule-export-run">导出为文件</button>
+          <button type="button" id="rule-export-cancel" class="ghost">取消</button>
+        </div>
+      </div>
+
+      <div class="entry-form hidden" id="rule-import-panel">
+        <h3>导入规则</h3>
+        <div class="form-row">
+          <label data-field="importFile">选择文件（.json）
+            <input type="file" id="rule-import-file" accept=".json,application/json">
+          </label>
+        </div>
+        <label class="full" data-field="importContent">或直接粘贴内容
+          <textarea id="rule-import-text" rows="8" placeholder='把导出的 JSON 内容贴进来，形如 { "rules": [ ... ] }'></textarea>
+        </label>
+        <div class="form-actions">
+          <button type="button" id="rule-import-preview">预演</button>
+          <button type="button" id="rule-import-run" class="hidden">确认导入</button>
+          <button type="button" id="rule-import-cancel" class="ghost">取消</button>
+        </div>
+        <div class="import-result hidden" id="rule-import-result"></div>
+      </div>
 
       <form class="entry-form hidden" id="rule-form" autocomplete="off">
         <h3 id="rule-form-title">新建规则</h3>

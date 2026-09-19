@@ -1,9 +1,6 @@
 const crypto = require('crypto');
-const { load, save, LEVELS, STATUSES, FILE_TYPES, MAX_CODE_LENGTH, MAX_RULE_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_NOTE_LENGTH } = require('./store');
+const { load, save, LEVELS, STATUSES, FILE_TYPES, CODE_PATTERN, MAX_CODE_LENGTH, MAX_RULE_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_NOTE_LENGTH } = require('./store');
 const { ApiError, pickText } = require('./errors');
-
-// 规则编码固定成大写字母加分段的数字，方便在命中清单里引用
-const CODE_PATTERN = /^[A-Z]{2,6}-\d{2,4}$/;
 
 function validateCode(value, data, selfId) {
   const code = pickText(value);

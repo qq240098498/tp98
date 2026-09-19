@@ -8,6 +8,8 @@ const TEMP_FILE = path.join(DATA_DIR, 'db.json.tmp');
 const LEVELS = ['提示', '警告', '错误'];
 const STATUSES = ['启用', '停用'];
 const FILE_TYPES = ['全部', 'js', 'sh', 'md', 'yml'];
+// 规则编码固定成大写字母加分段的数字，方便在命中清单里引用
+const CODE_PATTERN = /^[A-Z]{2,6}-\d{2,4}$/;
 const MAX_CODE_LENGTH = 20;
 const MAX_RULE_NAME_LENGTH = 40;
 const MAX_PATTERN_LENGTH = 60;
@@ -402,6 +404,7 @@ module.exports = {
   LEVELS,
   STATUSES,
   FILE_TYPES,
+  CODE_PATTERN,
   MAX_CODE_LENGTH,
   MAX_RULE_NAME_LENGTH,
   MAX_PATTERN_LENGTH,
