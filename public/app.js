@@ -515,6 +515,317 @@ el('operator').addEventListener('change', () => {
   window.localStorage.setItem(OPERATOR_KEY, currentOperator());
 });
 
+// ===== 规则的导入导出：团队之间共享规则，不用再一条条重录 =====
+const exportState = {
+  allRules: [],
+  selected: new Set(),
+  prevCandidateIds: new Set(),
+};
+let importParsed = null;
+
+function openModal(id) {
+  el(id).classList.remove('hidden');
+}
+
+function closeModal(id) {
+  el(id).classList.add('hidden');
+}
+
+// ---- 导出 ----
+async function openExport() {
+  clearNotice();
+  try {
+    // “全部规则”要绕开页面上的筛选条件，单独拉一份完整清单
+    const payload = await request('/api/rules');
+    exportState.allRules = payload.rules || [];
+    renderExportLevels();
+    el('export-content').value = '';
+    openModal('export-modal');
+    exportState.prevCandidateIds = new Set();
+    await refreshExport();
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+function renderExportLevels() {
+  const box = el('export-levels');
+  box.innerHTML = state.levels
+    .map((level) => `<label class="inline"><input type="checkbox" class="export-level" value="${escapeHtml(level)}" checked>${escapeHtml(level)}</label>`)
+    .join('');
+}
+
+function checkedExportLevels() {
+  return Array.from(document.querySelectorAll('.export-level:checked')).map((node) => node.value);
+}
+
+function exportScope() {
+  const checked = document.querySelector('input[name="export-scope"]:checked');
+  return checked ? checked.value : 'all';
+}
+
+function exportCandidates() {
+  const base = exportScope() === 'filtered' ? state.rules : exportState.allRules;
+  const levels = new Set(checkedExportLevels());
+  return base.filter((rule) => levels.has(rule.level));
+}
+
+function currentExportIds() {
+  return exportCandidates().filter((rule) => exportState.selected.has(rule.id)).map((rule) => rule.id);
+}
+
+// 级别或规则集变化后重算勾选：新进入候选范围的默认勾上，离开范围的剔除，其余保留本人的选择
+function syncExportSelection() {
+  const candidates = exportCandidates();
+  const next = new Set();
+  candidates.forEach((rule) => {
+    if (exportState.selected.has(rule.id) || !exportState.prevCandidateIds.has(rule.id)) next.add(rule.id);
+  });
+  exportState.selected = next;
+  exportState.prevCandidateIds = new Set(candidates.map((rule) => rule.id));
+}
+
+function renderExportRuleList() {
+  const box = el('export-rule-list');
+  const candidates = exportCandidates();
+  if (!candidates.length) {
+    box.innerHTML = '<span class="import-hint">当前规则集与级别下没有规则</span>';
+  } else {
+    box.innerHTML = candidates.map((rule) => `<label class="inline">
+        <input type="checkbox" class="export-rule-check" value="${escapeHtml(rule.id)}"${exportState.selected.has(rule.id) ? ' checked' : ''}>
+        <span class="mono">${escapeHtml(rule.code)}</span>
+        <span>${escapeHtml(rule.name)}</span>
+        <span class="pick-meta">${escapeHtml(rule.level)} · ${escapeHtml(rule.status)} · ${escapeHtml(rule.fileType)}</span>
+      </label>`).join('');
+  }
+  el('export-count').textContent = currentExportIds().length;
+}
+
+async function loadExportContent() {
+  const ids = currentExportIds();
+  if (!ids.length) {
+    el('export-content').value = '';
+    el('export-count').textContent = '0';
+    return;
+  }
+  try {
+    const query = `?ids=${ids.map(encodeURIComponent).join(',')}`;
+    const payload = await request(`/api/rules/export${query}`);
+    el('export-content').value = JSON.stringify(payload, null, 2);
+    el('export-count').textContent = payload.count;
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function refreshExport() {
+  syncExportSelection();
+  renderExportRuleList();
+  await loadExportContent();
+}
+
+function downloadExport() {
+  const ids = currentExportIds();
+  if (!ids.length) {
+    notify('还没有勾选任何规则', 'error');
+    return;
+  }
+  const query = `?ids=${ids.map(encodeURIComponent).join(',')}`;
+  const link = document.createElement('a');
+  link.href = `/api/rules/export${query}`;
+  link.download = 'rules-export.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+async function copyExport() {
+  const text = el('export-content').value;
+  if (!text) {
+    notify('还没有可复制的内容', 'error');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    notify('导出内容已复制', 'ok');
+  } catch (err) {
+    // 老浏览器或非安全上下文没有剪贴板接口，退回选中后执行复制
+    const area = el('export-content');
+    area.select();
+    document.execCommand('copy');
+    notify('导出内容已复制', 'ok');
+  }
+}
+
+// ---- 导入 ----
+function resetImport() {
+  el('import-content').value = '';
+  el('import-file').value = '';
+  el('import-parse-error').textContent = '';
+  el('import-result').classList.add('hidden');
+  el('import-confirm').disabled = true;
+  importParsed = null;
+}
+
+function openImport() {
+  clearNotice();
+  resetImport();
+  openModal('import-modal');
+}
+
+function ruleMetaLine(rule) {
+  return `${rule.level} · ${rule.status} · ${rule.fileType} · 匹配 ${rule.pattern}`;
+}
+
+function renderImportPreview(result) {
+  el('import-result').classList.remove('hidden');
+  el('import-summary').innerHTML = `一共 <strong>${result.total}</strong> 条：将新增 <strong>${result.addedCount}</strong> 条，与已有规则同编码 <strong>${result.conflictCount}</strong> 条，本身不成立 <strong>${result.invalidCount}</strong> 条。`;
+
+  el('import-added-count').textContent = result.addedCount;
+  el('import-added-list').innerHTML = result.added.length
+    ? result.added.map((rule) => `<li>
+        <span class="mono">${escapeHtml(rule.code)}</span> ${escapeHtml(rule.name)}
+        <div class="conflict-detail">${escapeHtml(ruleMetaLine(rule))}</div>
+      </li>`).join('')
+    : '<li class="import-hint">没有新增项</li>';
+
+  el('import-conflict-count').textContent = result.conflictCount;
+  el('import-conflict-list').innerHTML = result.conflicts.length
+    ? result.conflicts.map((rule) => `<li>
+        <span class="mono">${escapeHtml(rule.code)}</span> ${escapeHtml(rule.name)}
+        <div class="conflict-detail">清单里已有：${escapeHtml(rule.existing.code)} ${escapeHtml(rule.existing.name)}（${escapeHtml(rule.existing.level)} · ${escapeHtml(rule.existing.status)}）</div>
+        <div class="conflict-detail">导入内容：${escapeHtml(ruleMetaLine(rule))}</div>
+      </li>`).join('')
+    : '<li class="import-hint">没有同编码冲突</li>';
+
+  el('import-invalid-count').textContent = result.invalidCount;
+  el('import-invalid-list').innerHTML = result.invalid.length
+    ? result.invalid.map((item) => `<li>
+        第 ${item.index} 条${item.code ? ` <span class="mono">${escapeHtml(item.code)}</span>` : ''}${item.name ? ` ${escapeHtml(item.name)}` : ''}
+        <p class="reasons">${item.reasons.map((reason) => `· ${escapeHtml(reason)}`).join('<br>')}</p>
+      </li>`).join('')
+    : '<li class="import-hint">没有不成立的条目</li>';
+
+  updateImportConfirmState();
+}
+
+function conflictMode() {
+  const checked = document.querySelector('input[name="conflict-mode"]:checked');
+  return checked ? checked.value : 'skip';
+}
+
+// 跳过模式下至少要有新增项才值得提交；覆盖模式下有冲突也可以提交
+function updateImportConfirmState() {
+  const hasPreview = !el('import-result').classList.contains('hidden');
+  const added = Number(el('import-added-count').textContent) || 0;
+  const conflicts = Number(el('import-conflict-count').textContent) || 0;
+  el('import-confirm').disabled = !hasPreview || !(added > 0 || (conflictMode() === 'overwrite' && conflicts > 0));
+}
+
+async function runImportPreview() {
+  clearNotice();
+  const raw = el('import-content').value.trim();
+  el('import-parse-error').textContent = '';
+  if (!raw) {
+    el('import-parse-error').textContent = '请先选择文件或粘贴 JSON 内容';
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    el('import-parse-error').textContent = '内容不是合法的 JSON，请检查括号、引号与逗号';
+    return;
+  }
+  try {
+    const result = await request('/api/rules/import/preview', {
+      method: 'POST',
+      body: JSON.stringify(parsed),
+    });
+    importParsed = parsed;
+    renderImportPreview(result);
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+async function confirmImport() {
+  if (!importParsed) return;
+  try {
+    const result = await request('/api/rules/import', {
+      method: 'POST',
+      body: JSON.stringify({ content: importParsed, conflictMode: conflictMode() }),
+    });
+    const parts = [`新增 ${result.addedCount} 条`];
+    if (result.overwrittenCount) parts.push(`覆盖 ${result.overwrittenCount} 条`);
+    if (result.skippedCount) parts.push(`跳过冲突 ${result.skippedCount} 条`);
+    if (result.invalidCount) parts.push(`${result.invalidCount} 条不成立未导入`);
+    notify(`导入完成：${parts.join('，')}`, 'ok');
+    closeModal('import-modal');
+    await loadRules();
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+el('rule-export').addEventListener('click', openExport);
+el('rule-import').addEventListener('click', openImport);
+el('export-close').addEventListener('click', () => closeModal('export-modal'));
+el('import-close').addEventListener('click', () => closeModal('import-modal'));
+el('export-download').addEventListener('click', downloadExport);
+el('export-copy').addEventListener('click', () => {
+  copyExport().catch((err) => notify(err.message, 'error'));
+});
+el('export-select-all').addEventListener('click', async () => {
+  exportCandidates().forEach((rule) => exportState.selected.add(rule.id));
+  renderExportRuleList();
+  await loadExportContent();
+});
+el('export-select-none').addEventListener('click', async () => {
+  exportCandidates().forEach((rule) => exportState.selected.delete(rule.id));
+  renderExportRuleList();
+  await loadExportContent();
+});
+document.querySelectorAll('input[name="export-scope"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    refreshExport().catch((err) => notify(err.message, 'error'));
+  });
+});
+el('export-levels').addEventListener('change', (event) => {
+  if (event.target.classList.contains('export-level')) {
+    refreshExport().catch((err) => notify(err.message, 'error'));
+  }
+});
+el('export-rule-list').addEventListener('change', async (event) => {
+  if (!event.target.classList.contains('export-rule-check')) return;
+  const id = event.target.value;
+  if (event.target.checked) exportState.selected.add(id);
+  else exportState.selected.delete(id);
+  el('export-count').textContent = currentExportIds().length;
+  await loadExportContent();
+});
+el('import-file').addEventListener('change', () => {
+  const file = el('import-file').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    el('import-content').value = String(reader.result || '');
+  };
+  reader.onerror = () => notify('文件读不出来，请换一个文件或直接粘贴内容', 'error');
+  reader.readAsText(file);
+});
+el('import-preview').addEventListener('click', runImportPreview);
+el('import-confirm').addEventListener('click', confirmImport);
+document.querySelectorAll('input[name="conflict-mode"]').forEach((radio) => {
+  radio.addEventListener('change', updateImportConfirmState);
+});
+// 点遮罩空白处关掉弹层
+document.querySelectorAll('.modal-mask').forEach((mask) => {
+  mask.addEventListener('click', (event) => {
+    if (event.target === mask) mask.classList.add('hidden');
+  });
+});
+
 // 页面打开时先把规则与文件都拉一遍，扫描的范围下拉依赖这两份清单
 restoreOperator();
 loadHealth();

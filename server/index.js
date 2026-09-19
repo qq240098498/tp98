@@ -30,6 +30,33 @@ app.post('/api/rules', (req, res) => {
   }
 });
 
+// 导出规则：ids 留空导出全部，也可以传若干个编号；这个路由要排在 /:id 前面
+app.get('/api/rules/export', (req, res) => {
+  const ids = api.readQuery(req.query, 'ids');
+  const list = ids ? ids.split(',').map((id) => id.trim()).filter(Boolean) : [];
+  res.setHeader('Content-Disposition', 'attachment; filename="rules-export.json"');
+  res.json(api.exportRules(list));
+});
+
+// 导入前先预演：返回新增、同编码冲突、本身不成立三类，不写数据
+app.post('/api/rules/import/preview', (req, res) => {
+  try {
+    res.json(api.previewImport(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// 确认导入：conflictMode 取 skip（默认）或 overwrite
+app.post('/api/rules/import', (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    res.json(api.commitImport(body.content, body.conflictMode));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/rules/:id', (req, res) => {
   try {
     res.json(api.getRule(req.params.id));

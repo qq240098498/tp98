@@ -164,10 +164,204 @@ function deleteRule(id) {
   return { id: removed.id, code: removed.code, name: removed.name };
 }
 
+// 团队之间共享规则用的导出格式：只带规则本身的字段，不带各环境自己的编号与时间
+const EXPORT_FORMAT = 'check-rules';
+const EXPORT_VERSION = 1;
+
+function pickExportRule(rule) {
+  return {
+    code: rule.code,
+    name: rule.name,
+    level: rule.level,
+    status: rule.status,
+    fileType: rule.fileType,
+    pattern: rule.pattern,
+    note: rule.note,
+  };
+}
+
+// 按页面勾好的编号导出；不传编号就把清单里的规则全部导出
+function exportRules(ids) {
+  const data = load();
+  let list = sortRules(data.rules);
+  if (Array.isArray(ids) && ids.length) {
+    const wanted = new Set(ids.filter((id) => typeof id === 'string'));
+    list = list.filter((item) => wanted.has(item.id));
+  }
+  return {
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    count: list.length,
+    rules: list.map(pickExportRule),
+  };
+}
+
+// 导入内容认两种形状：{"rules": [...]} 或者直接一个规则数组
+function readImportRules(content) {
+  if (Array.isArray(content)) return content;
+  if (content && typeof content === 'object' && Array.isArray(content.rules)) return content.rules;
+  throw new ApiError(400, 'IMPORT_SHAPE_INVALID', '导入内容需要是 {"rules": [...]} 这样的 JSON，或者直接给一个规则数组', '');
+}
+
+// 逐条检查一条外来规则本身成不成立，问题全收集起来，不抛异常
+function inspectImportEntry(source) {
+  const reasons = [];
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return { reasons: ['这一条不是规则对象，可能缺了花括号'], fields: null };
+  }
+
+  const code = pickText(source.code);
+  const name = pickText(source.name);
+  const level = pickText(source.level);
+  const status = pickText(source.status);
+  const fileType = pickText(source.fileType);
+  const pattern = typeof source.pattern === 'string' ? source.pattern : '';
+  const note = source.note === undefined || source.note === null ? '' : source.note;
+
+  if (!code) reasons.push('编码为空：请填写规则编码');
+  else if (code.length > MAX_CODE_LENGTH) reasons.push(`编码写法不合规：不能超过 ${MAX_CODE_LENGTH} 个字符`);
+  else if (!CODE_PATTERN.test(code)) reasons.push('编码写法不合规：要写成大写字母加短横线加数字，例如 CODE-001');
+
+  if (!name) reasons.push('规则名称为空：请填写规则名称');
+  else if (name.length > MAX_RULE_NAME_LENGTH) reasons.push(`规则名称不能超过 ${MAX_RULE_NAME_LENGTH} 个字符`);
+
+  if (!pattern.trim()) reasons.push('匹配写法为空：请填写要匹配的写法');
+  else if (pattern.length > MAX_PATTERN_LENGTH) reasons.push(`匹配写法不能超过 ${MAX_PATTERN_LENGTH} 个字符`);
+
+  if (!level) reasons.push(`级别取值不认识：只能是 ${LEVELS.join('、')} 其中之一`);
+  else if (!LEVELS.includes(level)) reasons.push(`级别取值不认识：只能是 ${LEVELS.join('、')} 其中之一`);
+
+  if (!status) reasons.push(`状态取值不认识：只能是 ${STATUSES.join('、')} 其中之一`);
+  else if (!STATUSES.includes(status)) reasons.push(`状态取值不认识：只能是 ${STATUSES.join('、')} 其中之一`);
+
+  if (!fileType) reasons.push(`适用文件类型不在允许范围内：只能是 ${FILE_TYPES.join('、')} 其中之一`);
+  else if (!FILE_TYPES.includes(fileType)) reasons.push(`适用文件类型不在允许范围内：只能是 ${FILE_TYPES.join('、')} 其中之一`);
+
+  if (typeof note !== 'string') reasons.push('说明需要是文本');
+  else if (note.length > MAX_NOTE_LENGTH) reasons.push(`说明不能超过 ${MAX_NOTE_LENGTH} 个字符`);
+
+  return {
+    reasons,
+    fields: { code, name, level, status, fileType, pattern, note: typeof note === 'string' ? note.trim() : '' },
+  };
+}
+
+// 把外来内容分成新增、同编码冲突、本身不成立三类；预演与确认共用这一份判断
+function classifyImport(content) {
+  const rawList = readImportRules(content);
+  const data = load();
+  const seenCodes = new Map();
+  const added = [];
+  const conflicts = [];
+  const invalid = [];
+
+  rawList.forEach((source, index) => {
+    const { reasons, fields } = inspectImportEntry(source);
+    const codeText = fields ? fields.code : (source && typeof source === 'object' && !Array.isArray(source) && typeof source.code === 'string' ? source.code.trim() : '');
+
+    if (fields && fields.code) {
+      const lower = fields.code.toLowerCase();
+      if (seenCodes.has(lower)) {
+        reasons.push(`同一份内容里编码 ${fields.code} 出现了多次（第一次出现在第 ${seenCodes.get(lower) + 1} 条）`);
+      } else {
+        seenCodes.set(lower, index);
+      }
+    }
+
+    if (reasons.length) {
+      invalid.push({
+        index: index + 1,
+        code: codeText,
+        name: fields ? fields.name : '',
+        reasons,
+      });
+      return;
+    }
+
+    const existing = data.rules.find((item) => item.code.toLowerCase() === fields.code.toLowerCase());
+    const entry = { ...fields };
+    if (existing) {
+      conflicts.push({
+        ...entry,
+        existing: { id: existing.id, code: existing.code, name: existing.name, level: existing.level, status: existing.status },
+      });
+    } else {
+      added.push(entry);
+    }
+  });
+
+  return {
+    total: rawList.length,
+    added,
+    conflicts,
+    invalid,
+    addedCount: added.length,
+    conflictCount: conflicts.length,
+    invalidCount: invalid.length,
+  };
+}
+
+function previewImport(content) {
+  return classifyImport(content);
+}
+
+// 确认导入：冲突可以跳过或覆盖，不成立的条目一律不动清单
+function commitImport(content, conflictMode) {
+  const mode = conflictMode === 'overwrite' ? 'overwrite' : 'skip';
+  const result = classifyImport(content);
+  const data = load();
+  const now = new Date().toISOString();
+  const added = [];
+  const overwritten = [];
+  const skipped = [];
+
+  result.added.forEach((entry) => {
+    const created = { id: crypto.randomUUID(), ...entry, createdAt: now, updatedAt: now };
+    data.rules.push(created);
+    added.push(pickExportRule(created));
+  });
+
+  result.conflicts.forEach((entry) => {
+    const found = data.rules.find((item) => item.code.toLowerCase() === entry.code.toLowerCase());
+    if (!found) return;
+    if (mode === 'overwrite') {
+      found.code = entry.code;
+      found.name = entry.name;
+      found.level = entry.level;
+      found.status = entry.status;
+      found.fileType = entry.fileType;
+      found.pattern = entry.pattern;
+      found.note = entry.note;
+      found.updatedAt = now;
+      overwritten.push(pickExportRule(found));
+    } else {
+      skipped.push(pickExportRule(found));
+    }
+  });
+
+  save(data);
+  return {
+    mode,
+    total: result.total,
+    addedCount: added.length,
+    overwrittenCount: overwritten.length,
+    skippedCount: skipped.length,
+    invalidCount: result.invalidCount,
+    added,
+    overwritten,
+    skipped,
+    invalid: result.invalid,
+  };
+}
+
 module.exports = {
   listRules,
   getRule,
   createRule,
   updateRule,
   deleteRule,
+  exportRules,
+  previewImport,
+  commitImport,
 };

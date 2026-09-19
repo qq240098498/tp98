@@ -34,6 +34,8 @@
           <button type="button" id="rule-filter-apply">筛选</button>
           <button type="button" id="rule-filter-reset" class="ghost">重置</button>
           <button type="button" id="rule-refresh" class="ghost">刷新</button>
+          <button type="button" id="rule-import" class="ghost">导入规则</button>
+          <button type="button" id="rule-export">导出规则</button>
           <button type="button" id="rule-new">新建规则</button>
         </div>
       </div>
@@ -157,6 +159,91 @@
       <p class="empty-tip hidden" id="hit-empty">这一轮没有命中</p>
     </section>
   </main>
+
+  <div class="modal-mask hidden" id="export-modal">
+    <div class="modal">
+      <div class="modal-head">
+        <h3>导出规则</h3>
+        <button type="button" class="link" id="export-close">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="export-step">
+          <span class="step-title">规则集</span>
+          <label class="inline"><input type="radio" name="export-scope" value="all" checked>清单里的全部规则</label>
+          <label class="inline"><input type="radio" name="export-scope" value="filtered">当前筛选结果</label>
+        </div>
+        <div class="export-step">
+          <span class="step-title">级别</span>
+          <div class="check-row" id="export-levels"></div>
+        </div>
+        <div class="export-step">
+          <div class="step-title-row">
+            <span class="step-title">具体规则</span>
+            <span class="step-actions">
+              <button type="button" class="link" id="export-select-all">全选</button>
+              <button type="button" class="link" id="export-select-none">清空</button>
+            </span>
+          </div>
+          <div class="pick-list" id="export-rule-list"></div>
+        </div>
+        <div class="export-step">
+          <span class="step-title">导出内容（共 <strong id="export-count">0</strong> 条）</span>
+          <textarea id="export-content" rows="10" readonly></textarea>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" id="export-download">下载文件</button>
+        <button type="button" class="ghost" id="export-copy">复制内容</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-mask hidden" id="import-modal">
+    <div class="modal modal-wide">
+      <div class="modal-head">
+        <h3>导入规则</h3>
+        <button type="button" class="link" id="import-close">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="export-step">
+          <span class="step-title">规则内容</span>
+          <div class="import-source">
+            <label class="inline">选文件 <input type="file" id="import-file" accept=".json,application/json"></label>
+            <span class="import-hint">选了文件会填到下面，也可以直接把 JSON 粘贴进来</span>
+          </div>
+          <textarea id="import-content" rows="8" placeholder='{"format":"check-rules","rules":[{...}]}'></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="import-preview">先预演一遍</button>
+          <span class="import-hint" id="import-parse-error"></span>
+        </div>
+        <div class="import-result hidden" id="import-result">
+          <p class="import-summary" id="import-summary"></p>
+          <div class="import-groups">
+            <div class="import-group" id="import-added-box">
+              <h4>将新增 <span id="import-added-count">0</span> 条</h4>
+              <ul class="import-list ok" id="import-added-list"></ul>
+            </div>
+            <div class="import-group" id="import-conflict-box">
+              <h4>与已有规则同编码 <span id="import-conflict-count">0</span> 条</h4>
+              <ul class="import-list warn" id="import-conflict-list"></ul>
+              <div class="conflict-mode" id="conflict-mode-box">
+                <label class="inline"><input type="radio" name="conflict-mode" value="skip" checked>冲突的保持原样，只导入新增的</label>
+                <label class="inline"><input type="radio" name="conflict-mode" value="overwrite">用导入内容覆盖已有规则</label>
+              </div>
+            </div>
+            <div class="import-group" id="import-invalid-box">
+              <h4>本身不成立、不会导入 <span id="import-invalid-count">0</span> 条</h4>
+              <ul class="import-list bad" id="import-invalid-list"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" id="import-confirm" disabled>确认导入</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
